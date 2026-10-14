@@ -37,6 +37,7 @@ public class GameSettingsMenu {
         menu.setItem(7, createElytraTypeButton());
 
         menu.setItem(10, createFoodTypeButton());
+        menu.setItem(9, createButton(Material.WHITE_BANNER, "启用队伍数量", gameSettings.getEnabledTeamCount(), "» 左键增加 | 右键减少"));
         menu.setItem(12, createLevelButton(Material.SUGAR, "速度等级", gameSettings.getSpeedLevel()));
         menu.setItem(14, createLevelButton(Material.GLOWSTONE_DUST, "急迫等级", gameSettings.getHasteLevel()));
         menu.setItem(16, createLevelButton(Material.REDSTONE, "抗性提升等级", gameSettings.getResistLevel()));

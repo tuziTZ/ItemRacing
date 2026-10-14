@@ -16,11 +16,16 @@ import org.jetbrains.annotations.NotNull;
 import java.util.List;
 
 public class RestartCommand implements CommandExecutor, TabCompleter {
+    private static final String PERMISSION = "itemracing.admin.restart";
     private final GameManager gameManager;
     public RestartCommand(GameManager gameManager) { this.gameManager = gameManager; }
 
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, @NotNull String[] args) {
+        if (!sender.hasPermission(PERMISSION)) {
+            sender.sendMessage(Component.text("你没有权限重启服务器。", NamedTextColor.RED));
+            return true;
+        }
         if (!(sender instanceof Player player)) {
             // 终端可直接重启
             scheduleRestart();

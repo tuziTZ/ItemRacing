@@ -5,7 +5,8 @@ import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.entity.Player;
 
 import java.util.Collection;
-import java.util.HashMap;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -17,7 +18,8 @@ public class TeamManager {
 
     // 使用 Map 来存储所有队伍，以队伍的唯一ID (例如 "red") 作为键。
     // 这提供了非常快速的查找效率。
-    private final Map<String, Team> teams = new HashMap<>();
+    // 保留 config.yml 中的声明顺序，确保菜单、计分板和“启用前 N 支队伍”稳定一致。
+    private final Map<String, Team> teams = new LinkedHashMap<>();
 
     /**
      * 创建一个新队伍并将其添加到管理器中。
@@ -51,7 +53,7 @@ public class TeamManager {
      * @return 所有队伍的集合。
      */
     public Collection<Team> getAllTeams() {
-        return teams.values();
+        return Collections.unmodifiableCollection(teams.values());
     }
 
     /**

@@ -31,7 +31,7 @@ public class ChestCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage("这个指令只能由玩家执行。");
             return true;
         }
-        if(gameManager.getCurrentState() != GameManager.GameState.LOBBY && gameManager.getCurrentState() != GameManager.GameState.ACTIVE) {
+        if(gameManager.getCurrentState() != GameManager.GameState.ACTIVE) {
             player.sendMessage(Component.text("无法在当前阶段使用该命令！", NamedTextColor.RED));
             return true;
         }

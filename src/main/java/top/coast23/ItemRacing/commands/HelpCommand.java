@@ -48,9 +48,15 @@ public class HelpCommand implements CommandExecutor, TabCompleter {
             player.sendMessage(createHelpLine("/wp", "打开路径点菜单"));
             player.sendMessage(createHelpLine("/roll", "申请重摇任务"));
             player.sendMessage(createHelpLine("/sb <ranking | watch | rotate>", "切换计分板样式"));
+            if (player.hasPermission("itemracing.admin.end")) {
+                player.sendMessage(createHelpLine("/endgame confirm", "手动中止当前游戏"));
+            }
         }
         else if(gameManager.getCurrentState() == GameManager.GameState.ENDED){
             player.sendMessage(createHelpLine("/itemracing:restart", "重启服务器"));
+            if (player.hasPermission("itemracing.admin.reset")) {
+                player.sendMessage(createHelpLine("/resetgame confirm", "清理本局并返回大厅"));
+            }
         }
         return true;
     }

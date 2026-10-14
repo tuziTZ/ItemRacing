@@ -38,6 +38,7 @@ public class GameSettingsManager {
     private int teamChestAmount;
     private int teamWaypointAmount;
     private int maxRollsPerTeam;
+    private int enabledTeamCount;
 
     private int speedLevel;
     private int hasteLevel;
@@ -68,6 +69,7 @@ public class GameSettingsManager {
         this.teamChestAmount = configManager.getTeamChestAmount();
         this.teamWaypointAmount = configManager.getTeamWaypointAmount();
         this.maxRollsPerTeam = configManager.getMaxRollsPerTeam();
+        this.enabledTeamCount = configManager.getEnabledTeamCount();
 
         this.speedLevel = 2;
         this.hasteLevel = 2;
@@ -127,6 +129,10 @@ public class GameSettingsManager {
         return teamChestAmount;
     }
     public int getMaxRollsPerTeam() { return maxRollsPerTeam; }
+    public int getEnabledTeamCount() { return enabledTeamCount; }
+    public void setEnabledTeamCount(int enabledTeamCount) {
+        this.enabledTeamCount = Math.max(1, enabledTeamCount);
+    }
     public int getTeamWaypointAmount(){
         return teamWaypointAmount;
     }

@@ -50,6 +50,14 @@ public class JoinCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         String teamId = args[0].toLowerCase();
+        if (gameManager.getCurrentState() == GameManager.GameState.LOBBY && !gameManager.isEnabledTeam(teamId)) {
+            player.sendMessage(Component.text("该队伍当前未启用。", NamedTextColor.RED));
+            return true;
+        }
+        if (gameManager.getCurrentState() == GameManager.GameState.ACTIVE && !gameManager.isParticipatingTeam(teamId)) {
+            player.sendMessage(Component.text("游戏开始后只能加入本局已有的参赛队伍。", NamedTextColor.RED));
+            return true;
+        }
         if (teamManager.addPlayerToTeam(player, teamId)) {
             Team joinedTeam = teamManager.getTeamById(teamId).get();
             player.playerListName(Component.text(player.getName(), joinedTeam.getColor()));
@@ -74,7 +82,9 @@ public class JoinCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, @NotNull String[] args) {
         if (args.length == 1) {
-            return teamManager.getAllTeams().stream()
+            List<Team> availableTeams = gameManager.getCurrentState() == GameManager.GameState.ACTIVE
+                    ? gameManager.getParticipatingTeams() : gameManager.getEnabledTeams();
+            return availableTeams.stream()
                     .map(Team::getId)
                     .filter(id -> id.toLowerCase().startsWith(args[0].toLowerCase()))
                     .collect(Collectors.toList());

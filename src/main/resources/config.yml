@@ -17,6 +17,9 @@ teams:
     display-name: "§e黄队"
     color: "#FFFF55"
 
+# 大厅中可选择的队伍数量。按上方声明顺序取前 N 支；空队伍不会进入本局排名。
+enabled-team-count: 4
+
 # 是否为每位玩家解锁全配方
 unlock-all-recipes: true
 

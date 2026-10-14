@@ -46,9 +46,19 @@ public class ConfigManager {
 
     // --- Getters for settings ---
     public int getTotalItemsToCollect() { return config.getInt("items-to-collect", 20); }
-    public int getTeamChestAmount() { return config.getInt("team-chest-amount", 20); }
-    public int getTeamWaypointAmount() { return config.getInt("team-waypoint-amount", 31); }
-    public int getTaskQueueSize() { return config.getInt("task-queue-size", 5); }
+    public int getConfiguredTeamCount() {
+        ConfigurationSection teamsSection = config.getConfigurationSection("teams");
+        return teamsSection == null ? 0 : teamsSection.getKeys(false).size();
+    }
+    public int getEnabledTeamCount() {
+        int configuredTeams = getConfiguredTeamCount();
+        int requestedTeams = config.getInt("enabled-team-count", configuredTeams);
+        return Math.max(1, Math.min(requestedTeams, Math.max(1, Math.min(configuredTeams, 54))));
+    }
+    public int getTeamChestAmount() { return Math.max(1, Math.min(config.getInt("team-chest-amount", 20), 54)); }
+    public int getTeamWaypointAmount() { return Math.max(1, Math.min(config.getInt("team-waypoint-amount", 31), 54)); }
+    // 侧边栏最多 15 行；队列大于 5 时会挤掉排行榜/监视区。
+    public int getTaskQueueSize() { return Math.max(1, Math.min(config.getInt("task-queue-size", 5), 5)); }
     public int getInitialLocateUses() { return config.getInt("initial-locate-uses", 1); }
     public int getMaxRollsPerTeam() { return config.getInt("max-rolls-per-team", 5); }
     public int getLocateCommandCost() { return config.getInt("locate-cost", 3); }

@@ -2,6 +2,7 @@ package top.coast23.ItemRacing.guis;
 
 import top.coast23.ItemRacing.ItemRacing;
 import top.coast23.ItemRacing.managers.TeamManager;
+import top.coast23.ItemRacing.managers.GameManager;
 import top.coast23.ItemRacing.models.Team;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -28,13 +29,15 @@ public class TeamSelectMenu {
     public static final Component MENU_TITLE = Component.text("选择你的队伍", NamedTextColor.DARK_GREEN);
 
     private final TeamManager teamManager;
+    private final GameManager gameManager;
 
-    public TeamSelectMenu(TeamManager teamManager) {
+    public TeamSelectMenu(TeamManager teamManager, GameManager gameManager) {
         this.teamManager = teamManager;
+        this.gameManager = gameManager;
     }
 
     public void open(Player player) {
-        Collection<Team> allTeams = teamManager.getAllTeams();
+        Collection<Team> allTeams = gameManager.getEnabledTeams();
         int menuSize = Math.max(9, ((allTeams.size() - 1) / 9 + 1) * 9);
         Inventory menu = Bukkit.createInventory(null, menuSize, MENU_TITLE);
 

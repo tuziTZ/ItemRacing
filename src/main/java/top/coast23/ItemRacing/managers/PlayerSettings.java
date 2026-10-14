@@ -48,7 +48,7 @@ public class PlayerSettings {
     public PlayerDisplaySettings getSettingsFor(Player player) {
         // getOrDefault 确保即使玩家是第一次查询，我们也能返回一个安全的默认值。
         return playerSettingsMap.getOrDefault(player.getUniqueId(),
-                new PlayerDisplaySettings(ScoreboardStyle.ROTATING, null, 5));
+                new PlayerDisplaySettings(ScoreboardStyle.RANKING, null, 5));
     }
 
     /**
@@ -77,7 +77,7 @@ public class PlayerSettings {
      * @param seconds 滚动的间隔秒数。
      */
     public void setRotatingStyle(Player player, int seconds) {
-        int validSeconds = Math.max(1, seconds); // 确保间隔时间至少为1秒
+        int validSeconds = Math.max(1, Math.min(seconds, 60));
         PlayerDisplaySettings newSettings = new PlayerDisplaySettings(ScoreboardStyle.ROTATING, null, validSeconds);
         playerSettingsMap.put(player.getUniqueId(), newSettings);
     }

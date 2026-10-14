@@ -65,7 +65,7 @@ public final class ItemRacing extends JavaPlugin {
         new AntiGlitchTask().runTaskTimer(this, 0L, 2L);
 
         getLogger().info("========================================");
-        getLogger().info("              ItemRacing v1.2           ");
+        getLogger().info("              ItemRacing v" + getPluginMeta().getVersion() + "           ");
         getLogger().info("              插件已成功启动！");
         getLogger().info("========================================");
     }
@@ -104,7 +104,7 @@ public final class ItemRacing extends JavaPlugin {
         Objects.requireNonNull(getCommand("pc")).setExecutor(pcCommand);
         Objects.requireNonNull(getCommand("pc")).setTabCompleter(pcCommand);
 
-        ScoreboardCommand scoreboardCommandHandler = new ScoreboardCommand(playerSettings, teamManager);
+        ScoreboardCommand scoreboardCommandHandler = new ScoreboardCommand(playerSettings, teamManager, gameManager, scoreboardManager);
         PluginCommand sbCommand = Objects.requireNonNull(getCommand("scoreboard"));
         sbCommand.setExecutor(scoreboardCommandHandler);
         sbCommand.setTabCompleter(scoreboardCommandHandler);
@@ -116,6 +116,14 @@ public final class ItemRacing extends JavaPlugin {
         RestartCommand restartCommand = new RestartCommand(gameManager);
         Objects.requireNonNull(getCommand("restart")).setExecutor(restartCommand);
         Objects.requireNonNull(getCommand("restart")).setTabCompleter(restartCommand);
+
+        EndGameCommand endGameCommand = new EndGameCommand(gameManager);
+        Objects.requireNonNull(getCommand("endgame")).setExecutor(endGameCommand);
+        Objects.requireNonNull(getCommand("endgame")).setTabCompleter(endGameCommand);
+
+        ResetGameCommand resetGameCommand = new ResetGameCommand(gameManager);
+        Objects.requireNonNull(getCommand("resetgame")).setExecutor(resetGameCommand);
+        Objects.requireNonNull(getCommand("resetgame")).setTabCompleter(resetGameCommand);
     }
 
     private void registerListeners() {

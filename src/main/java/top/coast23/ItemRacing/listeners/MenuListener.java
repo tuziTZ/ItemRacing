@@ -101,7 +101,7 @@ public class MenuListener implements Listener {
 
     private void handleLobbyMenuClick(Player player, int slot) {
         switch (slot) {
-            case 1: new TeamSelectMenu(teamManager).open(player); break;
+            case 1: new TeamSelectMenu(teamManager, gameManager).open(player); break;
             case 3: new GameSettingsMenu(gameSettings).open(player); break;
             case 5:
                 if (teamManager.getPlayerTeam(player).isEmpty()) {
@@ -129,6 +129,11 @@ public class MenuListener implements Listener {
 
         if (teamId != null) {
             teamManager.getTeamById(teamId).ifPresent(clickedTeam -> {
+                if (gameManager.getCurrentState() != GameManager.GameState.LOBBY || !gameManager.isEnabledTeam(clickedTeam.getId())) {
+                    player.sendMessage(Component.text("该队伍当前不可加入。", NamedTextColor.RED));
+                    player.closeInventory();
+                    return;
+                }
                 if (teamManager.addPlayerToTeam(player, clickedTeam.getId())) {
                     player.playerListName(Component.text(player.getName(), clickedTeam.getColor()));
                 //    player.sendMessage(Component.text("成功加入 ", NamedTextColor.GREEN)
@@ -178,6 +183,13 @@ public class MenuListener implements Listener {
                 newValue = gameSettings.getElytraType().toString();
                 break;
             // --- Row 3 ---
+            case 9: // 启用队伍数量
+                preValue = String.valueOf(gameSettings.getEnabledTeamCount());
+                int delta = click.isRightClick() ? -1 : 1;
+                gameManager.setEnabledTeamCount(gameSettings.getEnabledTeamCount() + delta);
+                settingName = "启用队伍数量";
+                newValue = String.valueOf(gameSettings.getEnabledTeamCount());
+                break;
             case 10: // 开局食物
                 preValue = gameSettings.getFoodType().toString();
                 gameSettings.cycleFoodType();

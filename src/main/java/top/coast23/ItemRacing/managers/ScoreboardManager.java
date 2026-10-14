@@ -15,7 +15,6 @@ import org.bukkit.scoreboard.Objective;
 import org.bukkit.scoreboard.Scoreboard;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * 负责为所有玩家创建、更新和管理计分板。
@@ -27,7 +26,6 @@ public class ScoreboardManager {
     private final PlayerSettings playerSettings;
 
     private final Map<UUID, Scoreboard> playerScoreboards = new HashMap<>();
-    private final Map<UUID, Integer> rotationIndex = new HashMap<>();
     private BukkitTask updateTask;
 
     public ScoreboardManager(ItemRacing plugin, GameManager gameManager, PlayerSettings playerSettings) {
@@ -72,6 +70,15 @@ public class ScoreboardManager {
         }.runTask(plugin);
     }
 
+    public void forceUpdateScoreboard(Player player) {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                updateScoreboardFor(player, -1);
+            }
+        }.runTask(plugin);
+    }
+
     /**
      * 停止计分板更新任务。
      */
@@ -107,7 +114,6 @@ public class ScoreboardManager {
         player.setScoreboard(Bukkit.getScoreboardManager().getMainScoreboard());
         playerScoreboards.remove(player.getUniqueId());
         playerSettings.clearSettingsFor(player);
-        rotationIndex.remove(player.getUniqueId());
     }
 
     /**
@@ -146,6 +152,7 @@ public class ScoreboardManager {
             if(lineTeam != null) {
                 lineTeam.prefix(Component.empty());
             }
+            board.resetScores("§" + Integer.toHexString(i));
         }
 
         // 从上到下渲染新行
@@ -244,12 +251,22 @@ public class ScoreboardManager {
             lines.add(Component.text("你不在任何队伍中", NamedTextColor.GRAY));
         }
 
-        // 根据玩家偏好渲染下方视图
+        // 根据玩家偏好渲染下方视图。先渲染到临时列表，再按侧边栏 15 行上限截取。
         PlayerSettings.PlayerDisplaySettings settings = playerSettings.getSettingsFor(player);
+        List<Component> detailLines = new ArrayList<>();
         switch (settings.style()) {
-            case RANKING: renderRankingView(lines); break;
-            case WATCH_TEAM: renderWatchTeamView(player, lines, settings.watchedTeamId()); break;
-            case ROTATING: renderRotatingView(lines, player, settings.rotationSeconds(), timer); break;
+            case RANKING: renderRankingView(detailLines); break;
+            case WATCH_TEAM: renderWatchTeamView(player, detailLines, settings.watchedTeamId()); break;
+            case ROTATING: renderRotatingView(detailLines, player, settings.rotationSeconds(), timer); break;
+        }
+        int availableLines = Math.max(0, 15 - lines.size());
+        if (detailLines.size() <= availableLines) {
+            lines.addAll(detailLines);
+        } else if (availableLines == 1) {
+            lines.add(Component.text("» 更多内容已隐藏", NamedTextColor.DARK_GRAY));
+        } else if (availableLines > 1) {
+            lines.addAll(detailLines.subList(0, availableLines - 1));
+            lines.add(Component.text("» 更多内容已隐藏", NamedTextColor.DARK_GRAY));
         }
     }
 
@@ -257,7 +274,7 @@ public class ScoreboardManager {
         lines.add(Component.empty());
         lines.add(Component.text("» 排行榜", NamedTextColor.GOLD));
 
-        List<Team> sortedTeams = gameManager.getTeamManager().getAllTeams().stream()
+        List<Team> sortedTeams = gameManager.getParticipatingTeams().stream()
                 .sorted(Comparator.comparingInt((Team team) -> {
                     int total = gameManager.getTeamTotalItems().getOrDefault(team.getId(), 0);
                     int remaining = gameManager.getTeamRequiredItems().getOrDefault(team.getId(), Collections.emptyList()).size();
@@ -291,6 +308,10 @@ public class ScoreboardManager {
         if (targetTeamId == null) { lines.add(Component.text("» 未选择监视队伍", NamedTextColor.RED)); return; }
         Optional<Team> targetTeamOpt = gameManager.getTeamManager().getTeamById(targetTeamId);
         if (targetTeamOpt.isEmpty()) { lines.add(Component.text("» 监视的队伍不存在", NamedTextColor.RED)); return; }
+        if (!gameManager.isParticipatingTeam(targetTeamId)) {
+            lines.add(Component.text("» 该队伍未参加本局游戏", NamedTextColor.RED));
+            return;
+        }
 
         Team targetTeam = targetTeamOpt.get();
         int score = gameManager.getTeamScores().getOrDefault(targetTeam.getId(), 0);
@@ -313,50 +334,12 @@ public class ScoreboardManager {
         }
     }
 
-    private void _renderRotatingView(List<Component> lines, Player player, int seconds, int timer) {
-        lines.add(Component.empty());
-
-        List<Team> otherTeams = gameManager.getTeamManager().getAllTeams().stream()
-                .filter(team -> !team.isMember(player))
-                .collect(Collectors.toList());
-
-        if (otherTeams.isEmpty()) { lines.add(Component.text("» 没有其他队伍", NamedTextColor.YELLOW)); return; }
-
-        // 我的魔改
-    //    long gameTime = (System.currentTimeMillis() - gameManager.getGameStartTime()) / 1000;
-    //    int totalIntervalsPassed = (int) (elapsedSeconds / seconds);
-        int currentRotationIndex = rotationIndex.getOrDefault(player.getUniqueId(), 0);
-        // 每当计时器达到间隔秒数的倍数时，才增加索引
-        if (timer > 0 && timer % seconds == 0) {
-            currentRotationIndex = (currentRotationIndex + 1) % otherTeams.size();
-            rotationIndex.put(player.getUniqueId(), currentRotationIndex);
-        }
-        Team teamToDisplay = otherTeams.get(currentRotationIndex);
-        int score = gameManager.getTeamScores().getOrDefault(teamToDisplay.getId(), 0);
-        int totalItems = gameManager.getTeamTotalItems().getOrDefault(teamToDisplay.getId(), 0);
-        int remainingItems = gameManager.getTeamRequiredItems().getOrDefault(teamToDisplay.getId(), Collections.emptyList()).size();
-        int completedItems = totalItems - remainingItems;
-
-        lines.add(Component.text("» 滚动中: ", NamedTextColor.YELLOW)
-                .append(Component.text(teamToDisplay.getDisplayName(), teamToDisplay.getColor()))
-                .append(Component.text(" "))
-                .append(Component.text(score, NamedTextColor.YELLOW))
-                .append(Component.text("分 ", NamedTextColor.YELLOW))
-                .append(Component.text(" (" + completedItems + "/" + totalItems + ")", NamedTextColor.AQUA)));
-
-    //    List<Material> taskQueue = gameManager.getTaskQueueFor(teamToDisplay);
-        List<Material> taskQueue = gameManager.getCurrentItems(teamToDisplay);
-        for (int i = 0; i < taskQueue.size(); i++) {
-            Material item = taskQueue.get(i);
-            lines.add(Component.text("[" + (i + 1) + "] ", NamedTextColor.DARK_GRAY).append(Component.translatable(item).color(NamedTextColor.GRAY)));
-        }
-    }
     private void renderRotatingView(List<Component> lines, Player player, int seconds, int timer) {
         lines.add(Component.empty());
 
-        List<Team> otherTeams = gameManager.getTeamManager().getAllTeams().stream()
+        List<Team> otherTeams = gameManager.getParticipatingTeams().stream()
                 .filter(team -> !team.isMember(player))
-                .collect(Collectors.toList());
+                .toList();
 
         if (otherTeams.isEmpty()) { lines.add(Component.text("» 没有其他队伍", NamedTextColor.YELLOW)); return; }
 

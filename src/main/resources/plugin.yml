@@ -1,5 +1,5 @@
 name: ItemRacing
-version: '1.2'
+version: '${project.version}'
 main: top.coast23.ItemRacing.ItemRacing
 api-version: '1.21'
 commands:
@@ -45,3 +45,22 @@ commands:
   restart:
     description: 重启服务器
     usage: "/itemracing:restart"
+    permission: itemracing.admin.restart
+  endgame:
+    description: 手动中止当前游戏
+    usage: "/endgame confirm"
+    permission: itemracing.admin.end
+  resetgame:
+    description: 清理上一局并返回大厅
+    usage: "/resetgame confirm"
+    permission: itemracing.admin.reset
+permissions:
+  itemracing.admin.restart:
+    description: 允许重启服务器
+    default: op
+  itemracing.admin.end:
+    description: 允许手动中止正在进行的游戏
+    default: op
+  itemracing.admin.reset:
+    description: 允许重置游戏并返回大厅
+    default: op

@@ -67,6 +67,8 @@ public class GameManager {
     private final GameSettingsManager gameSettings;
     private final Map<String, Integer> teamTprUses = new HashMap<>();
     private final Set<UUID> globalRollRequesters = new HashSet<>();
+    // 开局时冻结的参赛队伍。配置队伍、可选队伍与本局实际参赛队伍不能混用。
+    private final Set<String> participatingTeamIds = new LinkedHashSet<>();
 
     // --- 局内游戏设置 ---
     private int itemsToCollect;
@@ -94,13 +96,13 @@ public class GameManager {
             return;
         }
 
-        boolean anyPlayerInTeams = teamManager.getAllTeams().stream().anyMatch(team -> team.getSize() > 0);
+        boolean anyPlayerInTeams = getEnabledTeams().stream().anyMatch(team -> team.getSize() > 0);
         if (!anyPlayerInTeams) {
             starter.sendMessage(Component.text("无法开始游戏：没有任何玩家加入队伍！", NamedTextColor.RED));
             return;
         }
 
-        Set<Player> playersInTeams = teamManager.getAllTeams().stream()
+        Set<Player> playersInTeams = getEnabledTeams().stream()
                 .flatMap(team -> team.getMembers().stream())
                 .map(Bukkit::getPlayer)
                 .filter(Objects::nonNull)
@@ -130,6 +132,9 @@ public class GameManager {
         this.gameStartTime = System.currentTimeMillis();
         lobbyManager.reset();
 
+        participatingTeamIds.clear();
+        participatingTeamIds.addAll(MatchRoster.participatingTeamIds(getEnabledTeams()));
+
         // 关闭所有玩家菜单
         for (Player player : Bukkit.getOnlinePlayers()) {
             player.closeInventory();
@@ -144,7 +149,7 @@ public class GameManager {
             // 竞速模式已被废弃, 我不会实现它
             List<Material> sharedItems = itemManager.generateRequiredItems(itemsToCollect);
             plugin.getLogger().info("竞速模式已启动，共享任务列表生成。");
-            for (Team team : teamManager.getAllTeams()) {
+            for (Team team : getParticipatingTeams()) {
                 // 每个队伍都获得这份列表的一个独立副本
                 teamRequiredItems.put(team.getId(), new ArrayList<>(sharedItems));
                 initializeTeamData(team, sharedItems.size());
@@ -152,7 +157,7 @@ public class GameManager {
         } else {
             // 经典模式：每个队伍独立生成任务列表
             plugin.getLogger().info("经典模式已启动，为每个队伍独立生成任务。");
-            for (Team team : teamManager.getAllTeams()) {
+            for (Team team : getParticipatingTeams()) {
                 List<Material> items = itemManager.generateRequiredItems(itemsToCollect);
                 teamRequiredItems.put(team.getId(), items);
                 initializeTeamData(team, items.size());
@@ -221,7 +226,8 @@ public class GameManager {
             player.removePotionEffect(effect.getType());
         }
 
-        executeSafeTeleport(player, true); // 随机传送
+        teamManager.getPlayerTeam(player)
+                .ifPresent(team -> executeSafeTeleport(player, TeleportCharge.INITIAL, team.getId()));
         // 随机传送后会分发物品
     //    player.sendMessage(Component.text("你的游戏开始了！", NamedTextColor.GREEN));
     }
@@ -299,7 +305,9 @@ public class GameManager {
     }
 
     public List<Material> getCurrentItems(Team team){
-        return teamRequiredItems.get(team.getId()).subList(0, Math.min(configManager.getTaskQueueSize(), teamRequiredItems.get(team.getId()).size()));
+        List<Material> requiredItems = teamRequiredItems.get(team.getId());
+        if (requiredItems == null || requiredItems.isEmpty()) return Collections.emptyList();
+        return requiredItems.subList(0, Math.min(configManager.getTaskQueueSize(), requiredItems.size()));
     }
 
     public void handleTaskCompletion(Team team, Material item, Player completer) {
@@ -356,8 +364,12 @@ public class GameManager {
             gameLoopTask.cancel();
         }
 
+        getParticipatingTeams().forEach(bossBarManager::removeRollBar);
+        bossBarManager.removeAllGlobalBars();
+
         // 游戏结束后，将所有玩家设为观察者模式
         for (Player p : Bukkit.getOnlinePlayers()) {
+            removeGameEffects(p);
             p.setGameMode(GameMode.SPECTATOR);
         }
         if (winningTeam != null) {
@@ -450,17 +462,45 @@ public class GameManager {
         }
 
         this.currentState = GameState.LOBBY;
+        if (gameLoopTask != null && !gameLoopTask.isCancelled()) gameLoopTask.cancel();
+        if (preGameLoopTask != null && !preGameLoopTask.isCancelled()) preGameLoopTask.cancel();
         teamRequiredItems.clear();
         teamScores.clear();
         teamTotalItems.clear();
         teamLocateUses.clear();
+        teamTprUses.clear();
         playerContributions.clear();
+        teamChestContributions.clear();
         teamChests.clear();
+        teamRollsUsed.clear();
+        teamRollRequesters.clear();
+        globalRollRequesters.clear();
         teamWaypoints.clear();
         teamWaypointIcons.clear(); // [新增] 在重置游戏时清空图标缓存
+        participatingTeamIds.clear();
         lobbyManager.reset();
         teamManager.getAllTeams().forEach(bossBarManager::removeRollBar);
+        bossBarManager.removeAllGlobalBars();
+        gameSettings.resetToDefaults();
+        // resetToDefaults 可能缩小可选队伍数，需要同步移出已被禁用队伍的玩家。
+        setEnabledTeamCount(gameSettings.getEnabledTeamCount());
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            player.closeInventory();
+            removeGameEffects(player);
+            player.setGameMode(GameMode.ADVENTURE);
+            player.getInventory().clear();
+        }
+        startPreGameLoop();
+        if (scoreboardManager != null) scoreboardManager.forceUpdateAllScoreboards();
         plugin.getLogger().info("游戏已重置，返回大厅准备阶段。");
+    }
+
+    private void removeGameEffects(Player player) {
+        player.removePotionEffect(PotionEffectType.NIGHT_VISION);
+        player.removePotionEffect(PotionEffectType.SPEED);
+        player.removePotionEffect(PotionEffectType.HASTE);
+        player.removePotionEffect(PotionEffectType.RESISTANCE);
+        player.removePotionEffect(PotionEffectType.SATURATION);
     }
 
 
@@ -480,7 +520,7 @@ public class GameManager {
             team.broadcast(Component.text(player.getName(), team.getColor())
                     .append(Component.text("使用了免费随机传送，剩余 " + (freeUses - 1) + " 次。", NamedTextColor.YELLOW))
             );
-            executeSafeTeleport(player, false); // 执行传送
+            executeSafeTeleport(player, TeleportCharge.FREE, team.getId());
             if (scoreboardManager != null) scoreboardManager.forceUpdateAllScoreboards();
             return true;
         }
@@ -500,72 +540,80 @@ public class GameManager {
         );
     //    player.sendMessage(Component.text("消耗 " + cost + " 积分...", NamedTextColor.YELLOW));
         if (scoreboardManager != null) scoreboardManager.forceUpdateAllScoreboards();
-        executeSafeTeleport(player, false); // 执行传送
+        executeSafeTeleport(player, TeleportCharge.PAID, team.getId());
         return true;
     }
 
+    private enum TeleportCharge { INITIAL, FREE, PAID }
+
     /**
-     * [新增] 真正执行安全随机传送的独立方法。
-     * @param player 要传送的玩家
-     * @param isInitial 是否是开局的第一次传送
+     * 使用 Paper 的异步区块加载逐次寻找落点；所有世界读取和玩家操作仍回到主线程执行。
      */
-    private void executeSafeTeleport(Player player, boolean isInitial) {
-        if (!isInitial) {
+    private void executeSafeTeleport(Player player, TeleportCharge charge, String chargedTeamId) {
+        if (charge != TeleportCharge.INITIAL) {
             player.sendMessage(Component.text("正在为你寻找一个安全的传送点...", NamedTextColor.GRAY));
         }
+        findSafeTeleportLocation(player, charge, chargedTeamId, 0);
+    }
 
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                Random random = new Random();
-                World world = Bukkit.getWorlds().get(0);
-                if (world == null) { /* ...U should never reach this... */ return; }
+    private void findSafeTeleportLocation(Player player, TeleportCharge charge, String chargedTeamId, int attempt) {
+        if (!player.isOnline() || currentState != GameState.ACTIVE) return;
+        if (attempt >= 128) {
+            handleTeleportFailure(player, charge, chargedTeamId);
+            return;
+        }
 
-                Location safeLocation = null;
-                int attempts = 0;
-                while (attempts < 128) {
-                    double x = world.getSpawnLocation().getX() + random.nextInt(20000) - 10000;
-                    double z = world.getSpawnLocation().getZ() + random.nextInt(20000) - 10000;
-                    Block highestBlock = world.getHighestBlockAt((int)x, (int)z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
+        World world = Bukkit.getWorlds().get(0);
+        Random random = new Random();
+        int blockX = world.getSpawnLocation().getBlockX() + random.nextInt(20000) - 10000;
+        int blockZ = world.getSpawnLocation().getBlockZ() + random.nextInt(20000) - 10000;
 
-                    if (isSafeSurface(highestBlock.getType())) {
-                        safeLocation = highestBlock.getLocation().add(0.5, 1.5, 0.5); // 增加Y坐标以防卡住
-                        break;
+        world.getChunkAtAsync(blockX >> 4, blockZ >> 4, true).whenComplete((chunk, throwable) ->
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    if (!player.isOnline() || currentState != GameState.ACTIVE) return;
+                    if (throwable != null) {
+                        findSafeTeleportLocation(player, charge, chargedTeamId, attempt + 1);
+                        return;
                     }
-                    attempts++;
-                }
 
-                final Location finalLocation = safeLocation;
-                new BukkitRunnable() {
-                    @Override
-                    public void run() {
-                        if (finalLocation != null) {
-                            player.teleportAsync(finalLocation);
-                            Component coords = Component.text("(")
-                                    .append(Component.text((int) finalLocation.getX(), NamedTextColor.AQUA))
-                                    .append(Component.text(", ", NamedTextColor.GRAY))
-                                    .append(Component.text((int) finalLocation.getY(), NamedTextColor.AQUA))
-                                    .append(Component.text(", ", NamedTextColor.GRAY))
-                                    .append(Component.text((int) finalLocation.getZ(), NamedTextColor.AQUA))
-                                    .append(Component.text(")"));
-                            player.sendMessage(Component.text("已将你随机传送到 ", NamedTextColor.LIGHT_PURPLE).append(coords));
-                            if(isInitial) giveStartingKit(player); // 分发初始物品
-                        } else {
-                            player.sendMessage(Component.text("传送失败，未能找到一个安全的地点。", NamedTextColor.RED));
-                            // 如果是非开局传送失败，返还积分
-                            if (!isInitial) {
-                                Optional<Team> teamOpt = teamManager.getPlayerTeam(player);
-                                if (teamOpt.isPresent()) {
-                                    int cost = configManager.getRandomTeleportCost();
-                                    teamScores.put(teamOpt.get().getId(), teamScores.getOrDefault(teamOpt.get().getId(), 0) + cost);
-                                    player.sendMessage(Component.text("已返还 " + cost + " 积分。", NamedTextColor.GREEN));
+                    Block highestBlock = world.getHighestBlockAt(blockX, blockZ, HeightMap.MOTION_BLOCKING_NO_LEAVES);
+                    if (!isSafeSurface(highestBlock.getType())) {
+                        findSafeTeleportLocation(player, charge, chargedTeamId, attempt + 1);
+                        return;
+                    }
+
+                    Location destination = highestBlock.getLocation().add(0.5, 1.5, 0.5);
+                    player.teleportAsync(destination).whenComplete((success, teleportError) ->
+                            Bukkit.getScheduler().runTask(plugin, () -> {
+                                if (!player.isOnline() || currentState != GameState.ACTIVE) return;
+                                if (teleportError != null || !Boolean.TRUE.equals(success)) {
+                                    handleTeleportFailure(player, charge, chargedTeamId);
+                                    return;
                                 }
-                            }
-                        }
-                    }
-                }.runTask(plugin);
-            }
-        }.runTaskAsynchronously(plugin);
+                                Component coords = Component.text("(")
+                                        .append(Component.text(destination.getBlockX(), NamedTextColor.AQUA))
+                                        .append(Component.text(", ", NamedTextColor.GRAY))
+                                        .append(Component.text(destination.getBlockY(), NamedTextColor.AQUA))
+                                        .append(Component.text(", ", NamedTextColor.GRAY))
+                                        .append(Component.text(destination.getBlockZ(), NamedTextColor.AQUA))
+                                        .append(Component.text(")"));
+                                player.sendMessage(Component.text("已将你随机传送到 ", NamedTextColor.LIGHT_PURPLE).append(coords));
+                                if (charge == TeleportCharge.INITIAL) giveStartingKit(player);
+                            }));
+                }));
+    }
+
+    private void handleTeleportFailure(Player player, TeleportCharge charge, String chargedTeamId) {
+        player.sendMessage(Component.text("传送失败，未能找到一个安全的地点。", NamedTextColor.RED));
+        if (charge == TeleportCharge.FREE) {
+            teamTprUses.merge(chargedTeamId, 1, Integer::sum);
+            player.sendMessage(Component.text("已返还一次免费随机传送。", NamedTextColor.GREEN));
+        } else if (charge == TeleportCharge.PAID) {
+            int cost = configManager.getRandomTeleportCost();
+            teamScores.merge(chargedTeamId, cost, Integer::sum);
+            player.sendMessage(Component.text("已返还 " + cost + " 积分。", NamedTextColor.GREEN));
+        }
+        if (scoreboardManager != null) scoreboardManager.forceUpdateAllScoreboards();
     }
 
     private boolean isSafeSurface(Material material) {
@@ -681,7 +729,7 @@ public class GameManager {
      * [补全] 检查全局重摇的状态。
      */
     public void checkGlobalRollStatus() {
-        List<Player> allPlayersInGame = teamManager.getAllTeams().stream()
+        List<Player> allPlayersInGame = getParticipatingTeams().stream()
                 .flatMap(team -> team.getMembers().stream())
                 .map(Bukkit::getPlayer)
                 .filter(p -> p != null && p.isOnline())
@@ -701,7 +749,7 @@ public class GameManager {
 
             List<Material> newGlobalTasks = itemManager.generateRequiredItems(remainingCount);
 
-            for (Team team : teamManager.getAllTeams()) {
+            for (Team team : getParticipatingTeams()) {
                 teamRequiredItems.put(team.getId(), new ArrayList<>(newGlobalTasks));
             //    replenishTaskQueue(team);
             }
@@ -826,6 +874,45 @@ public class GameManager {
     public GameSettingsManager getGameSettings() { return gameSettings; }
     public Map<String, Integer> getTeamTprUses(){ return teamTprUses;}
 
+    public List<Team> getEnabledTeams() {
+        return MatchRoster.enabledTeams(teamManager.getAllTeams(), gameSettings.getEnabledTeamCount());
+    }
+
+    public List<Team> getParticipatingTeams() {
+        return participatingTeamIds.stream()
+                .map(teamManager::getTeamById)
+                .flatMap(Optional::stream)
+                .toList();
+    }
+
+    public boolean isParticipatingTeam(String teamId) {
+        return participatingTeamIds.contains(teamId);
+    }
+
+    public boolean isEnabledTeam(String teamId) {
+        return getEnabledTeams().stream().anyMatch(team -> team.getId().equals(teamId));
+    }
+
+    public void setEnabledTeamCount(int requestedCount) {
+        if (currentState != GameState.LOBBY) return;
+        int maxTeams = Math.max(1, Math.min(teamManager.getAllTeams().size(), 54));
+        int newCount = Math.max(1, Math.min(requestedCount, maxTeams));
+        gameSettings.setEnabledTeamCount(newCount);
+
+        Set<String> enabledIds = getEnabledTeams().stream().map(Team::getId).collect(Collectors.toSet());
+        teamManager.getAllTeams().stream()
+                .filter(team -> !enabledIds.contains(team.getId()))
+                .flatMap(team -> team.getMembers().stream())
+                .map(Bukkit::getPlayer)
+                .filter(Objects::nonNull)
+                .forEach(player -> {
+                    teamManager.removePlayerFromCurrentTeam(player);
+                    player.playerListName(Component.text(player.getName()));
+                    if (lobbyManager.isPlayerReady(player)) lobbyManager.togglePlayerReady(player);
+                    player.sendMessage(Component.text("你所在的队伍已被禁用，请重新选择队伍。", NamedTextColor.YELLOW));
+                });
+    }
+
     public long getGameStartTime() {
         return gameStartTime;
     }
@@ -840,7 +927,7 @@ public class GameManager {
             }
 
             // 阶段一: 为所有游戏内玩家持续应用效果
-            for (Team team : teamManager.getAllTeams()) {
+            for (Team team : getParticipatingTeams()) {
                 for (UUID memberUUID : team.getMembers()) {
                     Player player = Bukkit.getPlayer(memberUUID);
                     if (player != null && player.isOnline()) {
@@ -850,7 +937,7 @@ public class GameManager {
             }
 
             // 阶段二: 检查所有队伍的任务完成情况
-            for (Team team : teamManager.getAllTeams()) {
+            for (Team team : getParticipatingTeams()) {
                 // [修复] 我们只检查当前任务队列中的物品，而不是所有未完成的物品。
                 // 这样可以防止玩家通过“运气”完成了一个尚未在计分板上显示的任务。
                 List<Material> tasksToCheck = new ArrayList<>(getCurrentItems(team));
@@ -864,6 +951,7 @@ public class GameManager {
 
                     if (completerOpt.isPresent()) {
                         handleTaskCompletion(team, requiredItem, completerOpt.get());
+                        if (currentState != GameState.ACTIVE) return;
                         // [重要] 完成一个后，跳出当前队伍的检查，防止一轮检查多个导致逻辑混乱
                         break;
                     }
@@ -875,6 +963,7 @@ public class GameManager {
                         for (Inventory chest : chests) {
                             if (chest.contains(requiredItem)) {
                                 handleTaskCompletion(team, requiredItem, null);
+                                if (currentState != GameState.ACTIVE) return;
                                 foundInChest = true;
                                 break; // 找到一个就够了，跳出箱子循环
                             }
@@ -888,13 +977,16 @@ public class GameManager {
         }
     }
     public void startPreGameLoop() {
+        if (preGameLoopTask != null && !preGameLoopTask.isCancelled()) {
+            preGameLoopTask.cancel();
+        }
         // Init world settings
         Bukkit.getScheduler().runTaskLater(ItemRacing.getInstance(), () -> {
             World world = Bukkit.getWorlds().get(0);
             world.setDifficulty(Difficulty.PEACEFUL);
-            world.setGameRule(GameRule.KEEP_INVENTORY, true);
-            Bukkit.getWorlds().get(1).setGameRule(GameRule.KEEP_INVENTORY, true);
-            Bukkit.getWorlds().get(2).setGameRule(GameRule.KEEP_INVENTORY, true);
+            for (World loadedWorld : Bukkit.getWorlds()) {
+                loadedWorld.setGameRule(GameRule.KEEP_INVENTORY, true);
+            }
             world.setTime(1000);
         }, 5);
 
