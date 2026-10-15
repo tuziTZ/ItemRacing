@@ -5,6 +5,7 @@ import org.bukkit.Sound;
 import top.coast23.ItemRacing.ItemRacing;
 import top.coast23.ItemRacing.guis.GameMenu;
 import top.coast23.ItemRacing.guis.GameSettingsMenu;
+import top.coast23.ItemRacing.guis.ItemBanMenu;
 import top.coast23.ItemRacing.guis.LobbyMenu;
 import top.coast23.ItemRacing.guis.TeamChestSelectMenu;
 import top.coast23.ItemRacing.guis.TeamSelectMenu;
@@ -84,6 +85,8 @@ public class MenuListener implements Listener {
             handleTeamSelectMenuClick(player, event.getCurrentItem());
         } else if (menuTitle.equals(GameSettingsMenu.MENU_TITLE)) {
             handleGameSettingsMenuClick(player, event.getSlot(), event.getClick());
+        } else if (menuTitle.equals(ItemBanMenu.MENU_TITLE)) {
+            new ItemBanMenu(gameManager).handleClick(player, event.getCurrentItem(), event.getClick());
         } else if (menuTitle.equals(GameMenu.MENU_TITLE)) {
             handleGameMenuClick(player, event.getSlot());
         } else if (menuTitle.equals(TeamChestSelectMenu.MENU_TITLE)) {
@@ -96,7 +99,8 @@ public class MenuListener implements Listener {
     private boolean isCustomMenu(Component title) {
         return title.equals(LobbyMenu.MENU_TITLE) || title.equals(GameMenu.MENU_TITLE) ||
                 title.equals(TeamSelectMenu.MENU_TITLE) || title.equals(GameSettingsMenu.MENU_TITLE) ||
-                title.equals(TeamChestSelectMenu.MENU_TITLE) || title.equals(WaypointMenu.MENU_TITLE);
+                title.equals(ItemBanMenu.MENU_TITLE) || title.equals(TeamChestSelectMenu.MENU_TITLE) ||
+                title.equals(WaypointMenu.MENU_TITLE);
     }
 
     private void handleLobbyMenuClick(Player player, int slot) {
@@ -152,6 +156,11 @@ public class MenuListener implements Listener {
     }
 
     private void handleGameSettingsMenuClick(Player player, int slot, ClickType click) {
+        if (gameManager.getCurrentState() != GameManager.GameState.LOBBY) {
+            player.closeInventory();
+            player.sendMessage(Component.text("游戏开始后不能修改游戏设置。", NamedTextColor.RED));
+            return;
+        }
         boolean refresh = true;
         String settingName = "";
         String newValue = "";
@@ -177,7 +186,7 @@ public class MenuListener implements Listener {
                 newValue = gameSettings.getToolType().toString();
                 break;
             case 7: // 开局鞘翅
-                preValue = gameSettings.getToolType().toString();
+                preValue = gameSettings.getElytraType().toString();
                 gameSettings.cycleElytraType();
                 settingName = "鞘翅";
                 newValue = gameSettings.getElytraType().toString();
@@ -219,28 +228,40 @@ public class MenuListener implements Listener {
                 break;
                 // --- Row 4 ---
             case 19:
-                preValue = gameSettings.isGiveMendingBook() ? "是" : "否";
-                gameSettings.toggleGiveMendingBook();
-                settingName = "给予 [经验修补]";
-                newValue = gameSettings.isGiveMendingBook() ? "是" : "否";
+                preValue = String.valueOf(gameSettings.getToolEfficiencyLevel());
+                if (click.isLeftClick()) gameSettings.setToolEfficiencyLevel(gameSettings.getToolEfficiencyLevel() + 1);
+                else if (click.isRightClick()) gameSettings.setToolEfficiencyLevel(gameSettings.getToolEfficiencyLevel() - 1);
+                settingName = "工具效率等级";
+                newValue = String.valueOf(gameSettings.getToolEfficiencyLevel());
                 break;
             case 21:
-                preValue = gameSettings.isGiveSilktouchBook() ? "是" : "否";
-                gameSettings.toggleGiveSilktouchBook();
-                settingName = "给予 [精准采集]";
-                newValue = gameSettings.isGiveSilktouchBook() ? "是" : "否";
+                preValue = String.valueOf(gameSettings.getToolUnbreakingLevel());
+                if (click.isLeftClick()) gameSettings.setToolUnbreakingLevel(gameSettings.getToolUnbreakingLevel() + 1);
+                else if (click.isRightClick()) gameSettings.setToolUnbreakingLevel(gameSettings.getToolUnbreakingLevel() - 1);
+                settingName = "工具耐久等级";
+                newValue = String.valueOf(gameSettings.getToolUnbreakingLevel());
                 break;
             case 23:
-                preValue = gameSettings.isGiveFortuneBook() ? "是" : "否";
-                gameSettings.toggleGiveFortuneBook();
-                settingName = "给予 [时运]";
-                newValue = gameSettings.isGiveFortuneBook() ? "是" : "否";
+                preValue = gameSettings.isToolMending() ? "是" : "否";
+                gameSettings.toggleToolMending();
+                settingName = "工具经验修补";
+                newValue = gameSettings.isToolMending() ? "是" : "否";
                 break;
             case 25:
-                preValue = gameSettings.isGiveLootingBook() ? "是" : "否";
-                gameSettings.toggleGiveLootingBook();
-                settingName = "给予 [抢夺]";
-                newValue = gameSettings.isGiveLootingBook() ? "是" : "否";
+                preValue = gameSettings.getToolDropEnchantment().displayName();
+                gameSettings.cycleToolDropEnchantment();
+                settingName = "工具采集附魔";
+                newValue = gameSettings.getToolDropEnchantment().displayName();
+                break;
+            case 29:
+                preValue = gameSettings.getItemSelectionMode().displayName();
+                gameSettings.cycleItemSelectionMode();
+                settingName = "任务难度模式";
+                newValue = gameSettings.getItemSelectionMode().displayName();
+                break;
+            case 31:
+                new ItemBanMenu(gameManager).open(player);
+                refresh = false;
                 break;
             default:
                 refresh = false;
@@ -248,6 +269,7 @@ public class MenuListener implements Listener {
         }
 
         if (refresh && !Objects.equals(preValue, newValue)) {
+            gameManager.invalidateLobbyReadyStates();
             broadcastManager.settingChanged(player, settingName, newValue);
             guiManager.openGameSettingsMenu(player);
             scoreboardManager.forceUpdateAllScoreboards();

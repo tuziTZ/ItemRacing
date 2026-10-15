@@ -2,6 +2,7 @@ package top.coast23.ItemRacing.managers;
 
 import net.kyori.adventure.text.format.TextDecoration;
 import top.coast23.ItemRacing.ItemRacing;
+import top.coast23.ItemRacing.listeners.ChatListener;
 import top.coast23.ItemRacing.models.Team;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -18,7 +19,6 @@ import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.enchantments.Enchantment;
-import org.bukkit.inventory.meta.EnchantmentStorageMeta;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -61,6 +61,7 @@ public class GameManager {
     private final Map<String, List<Inventory>> teamChests = new HashMap<>();
     private final Map<String, Integer> teamRollsUsed = new HashMap<>();
     private final Map<String, Set<UUID>> teamRollRequesters = new HashMap<>();
+    private final Map<String, Set<Material>> teamCompletedItems = new HashMap<>();
     private final Map<String, Map<Integer, Location>> teamWaypoints = new HashMap<>();
     private final Map<String, Map<Integer, Material>> teamWaypointIcons = new HashMap<>();
     private final Map<UUID, PermissionAttachment> locatePermissions = new HashMap<>();
@@ -69,6 +70,8 @@ public class GameManager {
     private final Set<UUID> globalRollRequesters = new HashSet<>();
     // 开局时冻结的参赛队伍。配置队伍、可选队伍与本局实际参赛队伍不能混用。
     private final Set<String> participatingTeamIds = new LinkedHashSet<>();
+    private Set<Material> activeItemExclusions = Collections.emptySet();
+    private ItemSelectionPolicy.Mode activeSelectionMode = ItemSelectionPolicy.Mode.PROGRESSIVE;
 
     // --- 局内游戏设置 ---
     private int itemsToCollect;
@@ -121,6 +124,13 @@ public class GameManager {
             return;
         }
 
+        if (itemManager.getAvailableItemCount(createMatchItemExclusions())
+                < gameSettings.getItemsToCollect()) {
+            starter.sendMessage(Component.text(
+                    "无法开始游戏：封禁物品过多，扣除初始装备后候选数量不足。", NamedTextColor.RED));
+            return;
+        }
+
         plugin.getLogger().info("游戏即将开始...");
         startGame();
     }
@@ -131,6 +141,7 @@ public class GameManager {
         this.currentState = GameState.ACTIVE;
         this.gameStartTime = System.currentTimeMillis();
         lobbyManager.reset();
+        ChatListener.cancelAllPendingInputs();
 
         participatingTeamIds.clear();
         participatingTeamIds.addAll(MatchRoster.participatingTeamIds(getEnabledTeams()));
@@ -142,12 +153,17 @@ public class GameManager {
 
         // 2. 获取本局游戏的核心设置
         int itemsToCollect = gameSettings.getItemsToCollect();
+        this.activeItemExclusions = Collections.unmodifiableSet(createMatchItemExclusions());
+        this.activeSelectionMode = gameSettings.getItemSelectionMode();
+        List<Integer> difficultySequence = itemManager.createDifficultySequence(
+                itemsToCollect, 1, itemsToCollect, activeSelectionMode);
 
         // 3. 根据游戏模式决定任务列表的分配方式
         if (gameSettings.getGameMode() == GameSettingsManager.GameMode.RACING) {
             // 竞速模式：所有队伍共享一份任务列表
             // 竞速模式已被废弃, 我不会实现它
-            List<Material> sharedItems = itemManager.generateRequiredItems(itemsToCollect);
+            List<Material> sharedItems = itemManager.generateRequiredItems(
+                    difficultySequence, activeItemExclusions, activeSelectionMode);
             plugin.getLogger().info("竞速模式已启动，共享任务列表生成。");
             for (Team team : getParticipatingTeams()) {
                 // 每个队伍都获得这份列表的一个独立副本
@@ -158,7 +174,8 @@ public class GameManager {
             // 经典模式：每个队伍独立生成任务列表
             plugin.getLogger().info("经典模式已启动，为每个队伍独立生成任务。");
             for (Team team : getParticipatingTeams()) {
-                List<Material> items = itemManager.generateRequiredItems(itemsToCollect);
+                List<Material> items = itemManager.generateRequiredItems(
+                        difficultySequence, activeItemExclusions, activeSelectionMode);
                 teamRequiredItems.put(team.getId(), items);
                 initializeTeamData(team, items.size());
             }
@@ -202,6 +219,7 @@ public class GameManager {
         teamTprUses.put(team.getId(), initialTprUses);
         teamRollsUsed.put(team.getId(), 0);
         teamRollRequesters.put(team.getId(), new HashSet<>());
+        teamCompletedItems.put(team.getId(), new HashSet<>());
 
         List<Inventory> chests = new ArrayList<>();
         for (int i = 0; i < chestAmount; i++) {
@@ -249,18 +267,37 @@ public class GameManager {
         }
     }
 
+    /** 防止玩家一开局就凭系统发放的物品自动完成任务。 */
+    private Set<Material> createMatchItemExclusions() {
+        Set<Material> exclusions = new HashSet<>(gameSettings.getBannedItems());
+        switch (gameSettings.getToolType()) {
+            case STONE -> exclusions.addAll(List.of(
+                    Material.STONE_PICKAXE, Material.STONE_AXE, Material.STONE_SHOVEL));
+            case IRON -> exclusions.addAll(List.of(
+                    Material.IRON_PICKAXE, Material.IRON_AXE, Material.IRON_SHOVEL));
+            case NONE -> { }
+        }
+        if (gameSettings.getElytraType() != GameSettingsManager.ElytraType.NONE) {
+            exclusions.add(Material.ELYTRA);
+        }
+        if (gameSettings.getFoodType() == GameSettingsManager.FoodType.GOLDEN_CARROT) {
+            exclusions.add(Material.GOLDEN_CARROT);
+        }
+        return exclusions;
+    }
+
     private void giveStartingKit(Player player){
         // 工具
         switch (gameSettings.getToolType()) {
             case STONE:
-                player.getInventory().addItem(new ItemStack(Material.STONE_PICKAXE));
-                player.getInventory().addItem(new ItemStack(Material.STONE_AXE));
-                player.getInventory().addItem(new ItemStack(Material.STONE_SHOVEL));
+                player.getInventory().addItem(createStartingTool(Material.STONE_PICKAXE));
+                player.getInventory().addItem(createStartingTool(Material.STONE_AXE));
+                player.getInventory().addItem(createStartingTool(Material.STONE_SHOVEL));
                 break;
             case IRON:
-                player.getInventory().addItem(new ItemStack(Material.IRON_PICKAXE));
-                player.getInventory().addItem(new ItemStack(Material.IRON_AXE));
-                player.getInventory().addItem(new ItemStack(Material.IRON_SHOVEL));
+                player.getInventory().addItem(createStartingTool(Material.IRON_PICKAXE));
+                player.getInventory().addItem(createStartingTool(Material.IRON_AXE));
+                player.getInventory().addItem(createStartingTool(Material.IRON_SHOVEL));
                 break;
         }
 
@@ -283,25 +320,35 @@ public class GameManager {
                 break;
         }
 
-        // 附魔书
-        if (gameSettings.isGiveMendingBook()) player.getInventory().addItem(createEnchantedBook(Enchantment.MENDING, 1));
-        if (gameSettings.isGiveSilktouchBook()) player.getInventory().addItem(createEnchantedBook(Enchantment.SILK_TOUCH, 1));
-        if (gameSettings.isGiveFortuneBook()) player.getInventory().addItem(createEnchantedBook(Enchantment.FORTUNE, 3));
-        if (gameSettings.isGiveLootingBook()) player.getInventory().addItem(createEnchantedBook(Enchantment.LOOTING, 3));
         // 金胡萝卜
         if (gameSettings.getFoodType() == GameSettingsManager.FoodType.GOLDEN_CARROT) {
             player.getInventory().addItem(new ItemStack(Material.GOLDEN_CARROT, 64));
         }
     }
 
-    private ItemStack createEnchantedBook(Enchantment enchantment, int level) {
-        ItemStack book = new ItemStack(Material.ENCHANTED_BOOK);
-        EnchantmentStorageMeta meta = (EnchantmentStorageMeta) book.getItemMeta();
+    ItemStack createStartingTool(Material material) {
+        ItemStack tool = new ItemStack(material);
+        ItemMeta meta = tool.getItemMeta();
         if (meta != null) {
-            meta.addStoredEnchant(enchantment, level, true);
-            book.setItemMeta(meta);
+            if (gameSettings.getToolEfficiencyLevel() > 0) {
+                meta.addEnchant(Enchantment.EFFICIENCY, gameSettings.getToolEfficiencyLevel(), false);
+            }
+            if (gameSettings.getToolUnbreakingLevel() > 0) {
+                meta.addEnchant(Enchantment.UNBREAKING, gameSettings.getToolUnbreakingLevel(), false);
+            }
+            if (gameSettings.isToolMending()) {
+                meta.addEnchant(Enchantment.MENDING, 1, false);
+            }
+            switch (gameSettings.getToolDropEnchantment()) {
+                case SILK_TOUCH -> meta.addEnchant(Enchantment.SILK_TOUCH, 1, false);
+                case FORTUNE_I, FORTUNE_II, FORTUNE_III ->
+                        meta.addEnchant(Enchantment.FORTUNE,
+                                gameSettings.getToolDropEnchantment().level(), false);
+                case NONE -> { }
+            }
+            tool.setItemMeta(meta);
         }
-        return book;
+        return tool;
     }
 
     public List<Material> getCurrentItems(Team team){
@@ -318,6 +365,7 @@ public class GameManager {
     //    List<Material> requiredItems = teamRequiredItems.get(team.getId());
         List<Material> requiredItems = getCurrentItems(team);
         if (requiredItems == null || !requiredItems.remove(item)) return;
+        teamCompletedItems.computeIfAbsent(team.getId(), ignored -> new HashSet<>()).add(item);
 
         int currentScore = teamScores.getOrDefault(team.getId(), 0);
         teamScores.put(team.getId(), currentScore + configManager.getScorePerItem());
@@ -474,10 +522,14 @@ public class GameManager {
         teamChests.clear();
         teamRollsUsed.clear();
         teamRollRequesters.clear();
+        teamCompletedItems.clear();
         globalRollRequesters.clear();
         teamWaypoints.clear();
         teamWaypointIcons.clear(); // [新增] 在重置游戏时清空图标缓存
         participatingTeamIds.clear();
+        activeItemExclusions = Collections.emptySet();
+        activeSelectionMode = ItemSelectionPolicy.Mode.PROGRESSIVE;
+        ChatListener.cancelAllPendingInputs();
         lobbyManager.reset();
         teamManager.getAllTeams().forEach(bossBarManager::removeRollBar);
         bossBarManager.removeAllGlobalBars();
@@ -706,12 +758,22 @@ public class GameManager {
 
         Set<UUID> onlineMemberIds = onlineMembers.stream().map(Player::getUniqueId).collect(Collectors.toSet());
         if (requesters.containsAll(onlineMemberIds)) {
+            int leftItems = teamRequiredItems.get(teamId).size();
+            int completedCount = teamTotalItems.getOrDefault(teamId, leftItems) - leftItems;
+            Set<Material> excluded = new HashSet<>(activeItemExclusions);
+            excluded.addAll(teamCompletedItems.getOrDefault(teamId, Collections.emptySet()));
+            List<Integer> difficultySequence = itemManager.createDifficultySequence(
+                    teamTotalItems.getOrDefault(teamId, leftItems), completedCount + 1,
+                    leftItems, activeSelectionMode);
+            List<Material> newItems = itemManager.generateRequiredItems(
+                    difficultySequence, excluded, activeSelectionMode);
+            if (newItems.size() != leftItems) {
+                team.broadcast(Component.text("可用物品不足，无法完成本次重摇。", NamedTextColor.RED));
+                return;
+            }
+
             int rollsUsed = teamRollsUsed.get(teamId) + 1;
             teamRollsUsed.put(teamId, rollsUsed);
-
-            int leftItems = teamRequiredItems.get(teamId).size();
-            List<Material> newItems = itemManager.generateRequiredItems(leftItems);
-        //    teamRequiredItems.get(teamId).clear();
             teamRequiredItems.put(teamId, new ArrayList<>(newItems));
 
             requesters.clear();
@@ -747,7 +809,18 @@ public class GameManager {
             int remainingCount = teamRequiredItems.values().stream().findFirst().map(List::size).orElse(0);
             if (remainingCount == 0) return;
 
-            List<Material> newGlobalTasks = itemManager.generateRequiredItems(remainingCount);
+            int totalCount = teamTotalItems.values().stream().findFirst().orElse(remainingCount);
+            int completedCount = Math.max(0, totalCount - remainingCount);
+            Set<Material> excluded = new HashSet<>(activeItemExclusions);
+            teamCompletedItems.values().forEach(excluded::addAll);
+            List<Integer> difficultySequence = itemManager.createDifficultySequence(
+                    totalCount, completedCount + 1, remainingCount, activeSelectionMode);
+            List<Material> newGlobalTasks = itemManager.generateRequiredItems(
+                    difficultySequence, excluded, activeSelectionMode);
+            if (newGlobalTasks.size() != remainingCount) {
+                Bukkit.broadcast(Component.text("可用物品不足，无法完成全局重摇。", NamedTextColor.RED));
+                return;
+            }
 
             for (Team team : getParticipatingTeams()) {
                 teamRequiredItems.put(team.getId(), new ArrayList<>(newGlobalTasks));
@@ -873,6 +946,11 @@ public class GameManager {
     public Map<String, Map<Integer, Material>> getTeamWaypointIcons() { return teamWaypointIcons; }
     public GameSettingsManager getGameSettings() { return gameSettings; }
     public Map<String, Integer> getTeamTprUses(){ return teamTprUses;}
+
+    /** 修改比赛规则后，要求所有玩家重新确认准备。 */
+    public void invalidateLobbyReadyStates() {
+        if (currentState == GameState.LOBBY) lobbyManager.reset();
+    }
 
     public List<Team> getEnabledTeams() {
         return MatchRoster.enabledTeams(teamManager.getAllTeams(), gameSettings.getEnabledTeamCount());

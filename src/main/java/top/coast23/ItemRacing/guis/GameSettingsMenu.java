@@ -3,6 +3,7 @@ package top.coast23.ItemRacing.guis;
 import org.bukkit.inventory.meta.Damageable;
 import top.coast23.ItemRacing.ItemRacing;
 import top.coast23.ItemRacing.managers.GameSettingsManager;
+import top.coast23.ItemRacing.managers.ItemSelectionPolicy;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
@@ -29,7 +30,7 @@ public class GameSettingsMenu {
     }
 
     public void open(Player player) {
-        Inventory menu = Bukkit.createInventory(null, 27, MENU_TITLE);
+        Inventory menu = Bukkit.createInventory(null, 36, MENU_TITLE);
 
         menu.setItem(1, createButton(Material.CHEST, "任务物品数量", gameSettings.getItemsToCollect(), "» 点击后在聊天框输入数字"));
         menu.setItem(3, createGameModeButton());
@@ -42,10 +43,16 @@ public class GameSettingsMenu {
         menu.setItem(14, createLevelButton(Material.GLOWSTONE_DUST, "急迫等级", gameSettings.getHasteLevel()));
         menu.setItem(16, createLevelButton(Material.REDSTONE, "抗性提升等级", gameSettings.getResistLevel()));
 
-        menu.setItem(19, createToggleButton(gameSettings.isGiveMendingBook(), "经验修补"));
-        menu.setItem(21, createToggleButton(gameSettings.isGiveSilktouchBook(), "精准采集"));
-        menu.setItem(23, createToggleButton(gameSettings.isGiveFortuneBook(), "时运"));
-        menu.setItem(25, createToggleButton(gameSettings.isGiveLootingBook(), "抢夺"));
+        menu.setItem(19, createLevelButton(Material.DIAMOND_PICKAXE, "工具效率等级", gameSettings.getToolEfficiencyLevel()));
+        menu.setItem(21, createLevelButton(Material.ANVIL, "工具耐久等级", gameSettings.getToolUnbreakingLevel()));
+        menu.setItem(23, createToggleButton(gameSettings.isToolMending(), "工具经验修补", Material.EXPERIENCE_BOTTLE));
+        menu.setItem(25, createCycleButton(Material.ENCHANTING_TABLE, "工具采集附魔", gameSettings.getToolDropEnchantment().displayName()));
+
+        ItemSelectionPolicy.Mode selectionMode = gameSettings.getItemSelectionMode();
+        menu.setItem(29, createCycleButton(Material.RECOVERY_COMPASS, "任务难度模式", selectionMode.displayName()));
+        menu.setItem(31, createButton(Material.BARRIER, "物品封禁", gameSettings.getBannedItems().size(),
+                "» 点击管理玩家可选黑名单",
+                "» 当前可抽取: " + gameSettings.getAvailableItemCount()));
 
         player.openInventory(menu);
     }
@@ -118,13 +125,13 @@ public class GameSettingsMenu {
         return createCycleButton(new ItemStack(material), name, status);
     }
 
-    private ItemStack createToggleButton(boolean enabled, String name) {
+    private ItemStack createToggleButton(boolean enabled, String name, Material icon) {
         List<Component> description = new ArrayList<>();
         description.add(Component.text("当前状态: ", NamedTextColor.GRAY).append(enabled ? Component.text("开启", NamedTextColor.GREEN) : Component.text("关闭", NamedTextColor.RED)));
         description.add(Component.empty());
         description.add(Component.text("» 点击切换", NamedTextColor.YELLOW));
 
-        ItemStack item = createBaseButton(Material.ENCHANTED_BOOK, Component.text(name, NamedTextColor.AQUA), description);
+        ItemStack item = createBaseButton(icon, Component.text(name, NamedTextColor.AQUA), description);
         if (enabled) {
             ItemMeta meta = item.getItemMeta();
             if (meta != null) {

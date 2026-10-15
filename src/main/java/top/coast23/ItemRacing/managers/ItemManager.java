@@ -1,145 +1,218 @@
 package top.coast23.ItemRacing.managers;
 
-import top.coast23.ItemRacing.ItemRacing;
 import org.bukkit.Material;
+import org.bukkit.configuration.file.YamlConfiguration;
+import top.coast23.ItemRacing.ItemRacing;
+import top.coast23.ItemRacing.models.ItemDefinition;
 
+import java.io.File;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.EnumSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Random;
 import java.util.Set;
+import java.util.random.RandomGenerator;
 
 /**
- * [改造后] 负责管理游戏中的所有物品。
+ * 加载 items.yml 中的任务物品目录，并委托 ItemSelectionPolicy 完成抽取。
  */
 public class ItemManager {
 
-    private final ItemRacing plugin;
-    private final List<Material> survivalItemPool = new ArrayList<>();
+    private static final String ITEMS_FILE_NAME = "items.yml";
 
-    // [改造] 使用EnumSet以获得更好的性能，并添加新的黑名单项目
-    private final Set<Material> itemBlacklist = EnumSet.of(
-            // --- 基础/虚拟方块 ---
-            Material.AIR, Material.CAVE_AIR, Material.VOID_AIR, Material.WATER, Material.LAVA,
-            // --- 技术性/管理员方块 ---
-            Material.COMMAND_BLOCK, Material.CHAIN_COMMAND_BLOCK, Material.REPEATING_COMMAND_BLOCK,
-            Material.BARRIER, Material.STRUCTURE_VOID, Material.STRUCTURE_BLOCK, Material.JIGSAW,
-            Material.LIGHT, Material.DEBUG_STICK, Material.KNOWLEDGE_BOOK,
-            // --- 生存无法获取方块 ---
-            Material.BEDROCK, Material.END_PORTAL_FRAME, Material.END_PORTAL, Material.END_GATEWAY,
-            Material.NETHER_PORTAL, Material.REINFORCED_DEEPSLATE,
-            Material.SPAWNER, Material.TRIAL_SPAWNER, Material.VAULT,
-            // --- 状态依赖/不可拾取 ---
-            Material.FARMLAND, Material.DIRT_PATH, Material.FROSTED_ICE,
-            Material.PISTON_HEAD, Material.MOVING_PISTON,
-            Material.BUBBLE_COLUMN, Material.TRIPWIRE,
-            // --- 依赖NBT数据 (为简化逻辑，初期排除) ---
-            Material.POTION, Material.SPLASH_POTION, Material.LINGERING_POTION,
-            Material.ENCHANTED_BOOK, Material.TIPPED_ARROW, Material.OMINOUS_BOTTLE,
-            Material.SUSPICIOUS_STEW, Material.WRITTEN_BOOK, Material.FILLED_MAP,
-            Material.FIREWORK_ROCKET, Material.FIREWORK_STAR,
-            // [新增] 纹样陶片
-            Material.ANGLER_POTTERY_SHERD, Material.ARCHER_POTTERY_SHERD, Material.ARMS_UP_POTTERY_SHERD,
-            Material.BLADE_POTTERY_SHERD, Material.BREWER_POTTERY_SHERD, Material.BURN_POTTERY_SHERD,
-            Material.DANGER_POTTERY_SHERD, Material.EXPLORER_POTTERY_SHERD, Material.FRIEND_POTTERY_SHERD,
-            Material.HEART_POTTERY_SHERD, Material.HEARTBREAK_POTTERY_SHERD, Material.HOWL_POTTERY_SHERD,
-            Material.MINER_POTTERY_SHERD, Material.MOURNER_POTTERY_SHERD, Material.PLENTY_POTTERY_SHERD,
-            Material.PRIZE_POTTERY_SHERD, Material.SHEAF_POTTERY_SHERD, Material.SHELTER_POTTERY_SHERD,
-            Material.SKULL_POTTERY_SHERD, Material.SNORT_POTTERY_SHERD,
-            // 头颅, 但保留了凋零骷髅头
-            Material.PLAYER_HEAD, Material.ZOMBIE_HEAD, Material.CREEPER_HEAD, Material.SKELETON_SKULL, /*Material.WITHER_SKELETON_SKULL,*/ Material.DRAGON_HEAD, Material.PIGLIN_HEAD,
-            // 深层煤炭矿石和深层绿宝石矿石
-            Material.DEEPSLATE_COAL_ORE, Material.DEEPSLATE_EMERALD_ORE,
-            // 潮涌核心
-            Material.CONDUIT,
-            // 龙蛋
-            Material.DRAGON_EGG,
-            // 下界合金块
-            Material.NETHERITE_BLOCK,
-            // 沉重核心
-            Material.HEAVY_CORE,
-            // 重锤
-            Material.MACE,
-            // 下界之星
-            Material.NETHER_STAR,
-            // 信标
-            Material.BEACON,
-            // 石化橡木台阶
-            Material.PETRIFIED_OAK_SLAB,
-            // 青蛙卵
-            Material.FROGSPAWN,
-            // 紫水晶母岩
-            Material.BUDDING_AMETHYST,
-            // 高草丛、高海草、大型蕨
-            Material.TALL_GRASS/*, Material.TALL_DRY_GRASS*/, Material.TALL_SEAGRASS, Material.LARGE_FERN,
-            // 鹦鹉壳
-            Material.NAUTILUS_SHELL,
-            // 三叉戟
-            Material.TRIDENT,
-            // 不死图腾
-            Material.TOTEM_OF_UNDYING,
-            // 紫颂植株
-            Material.CHORUS_PLANT,
-            // 凋零玫瑰
-            Material.WITHER_ROSE,
-            // 地球旗帜图案, 涡流旗帜图案, 旋风旗帜图案, 猪鼻旗帜图案, 苦力怕盾徽旗帜图案
-            Material.GLOBE_BANNER_PATTERN, Material.FLOW_BANNER_PATTERN, Material.GUSTER_BANNER_PATTERN, Material.PIGLIN_BANNER_PATTERN, Material.CREEPER_BANNER_PATTERN,
-            // 可疑的沙子, 可疑的沙砾
-            Material.SUSPICIOUS_SAND, Material.SUSPICIOUS_GRAVEL,
-            // 龙息
-            Material.DRAGON_BREATH
-    );
+    private final ItemRacing plugin;
+    private final RandomGenerator random;
+    private final Map<Material, ItemDefinition> definitions = new EnumMap<>(Material.class);
+    private final List<Material> selectableItemPool = new ArrayList<>();
+    private final Set<Material> mandatoryExclusions = EnumSet.noneOf(Material.class);
+    private final Set<Material> defaultPlayerBans = EnumSet.noneOf(Material.class);
+    private ItemSelectionPolicy selectionPolicy;
 
     public ItemManager(ItemRacing plugin) {
+        // RandomGenerator.getDefault() 依赖服务提供者，在 Paper 隔离插件类加载器中可能不可见。
+        this(plugin, new Random());
+    }
+
+    ItemManager(ItemRacing plugin, RandomGenerator random) {
         this.plugin = plugin;
+        this.random = random;
+        this.selectionPolicy = new ItemSelectionPolicy(random, 1.0, 4.5, 1.35);
     }
 
     /**
-     * 加载生存模式可获取的物品池。
+     * 从 items.yml 建立完整物品定义。仅技术上不可作为任务的物品从候选池中移除。
      */
     public void loadSurvivalItemPool() {
-        survivalItemPool.clear();
+        if (plugin == null) {
+            throw new IllegalStateException("测试用 ItemManager 不能加载插件资源");
+        }
+
+        File itemsFile = new File(plugin.getDataFolder(), ITEMS_FILE_NAME);
+        if (!itemsFile.exists()) {
+            plugin.saveResource(ITEMS_FILE_NAME, false);
+        }
+
+        YamlConfiguration config = YamlConfiguration.loadConfiguration(itemsFile);
+        List<String> mandatoryRules = normalizeRules(config.getStringList("mandatory-exclusions"));
+        List<String> defaultBanRules = normalizeRules(config.getStringList("default-player-bans"));
+        int defaultDifficulty = clampDifficulty(config.getInt("difficulty.default-level", 2));
+
+        Map<Integer, List<String>> difficultyRules = new java.util.HashMap<>();
+        for (int level = 1; level <= 5; level++) {
+            difficultyRules.put(level,
+                    normalizeRules(config.getStringList("difficulty.levels." + level)));
+        }
+
+        double minimum = config.getDouble("difficulty.curve.minimum", 1.0);
+        double maximum = config.getDouble("difficulty.curve.maximum", 4.5);
+        double exponent = config.getDouble("difficulty.curve.exponent", 1.35);
+        this.selectionPolicy = new ItemSelectionPolicy(random, minimum, maximum, exponent);
+
+        definitions.clear();
+        selectableItemPool.clear();
+        mandatoryExclusions.clear();
+        defaultPlayerBans.clear();
 
         for (Material material : Material.values()) {
-            String name = material.name();
-            // [改造] 使用更严谨的规则进行过滤
-            if (material.isLegacy() ||
-                    itemBlacklist.contains(material) ||
-                    name.endsWith("_SPAWN_EGG") ||
-            //        name.endsWith("_BANNER_PATTERN") || // 排除所有旗帜图案
-                    name.startsWith("MUSIC_DISC_") || // 排除所有音乐唱片
-                    name.contains("CHAINMAIL_") || // 排除所有锁链装备
-                    name.contains("TORCHFLOWER") || // 火把花
-                    name.contains("PITCHER") || // 瓶子草与荚果
-                    name.contains("SNIFFER") || // 嗅探兽蛋
-                    name.contains("_ARMOR_TRIM") || // 锻造模板
-                    name.contains("_FROGLIGHT") || // 蛙明灯
-                    name.contains("INFESTED_") || // 虫蚀方块
-                    name.contains("COMMAND_BLOCK")) // 命令方块
-            {
-                continue;
-            }
+            boolean mandatory = material.isLegacy() || !material.isItem()
+                    || matchesAny(material, mandatoryRules);
+            boolean defaultBanned = !mandatory && matchesAny(material, defaultBanRules);
+            int difficulty = resolveDifficulty(material, defaultDifficulty, difficultyRules);
 
-            if (material.isItem()) {
-                survivalItemPool.add(material);
+            ItemDefinition definition = new ItemDefinition(material, difficulty, mandatory, defaultBanned);
+            definitions.put(material, definition);
+            if (mandatory) {
+                mandatoryExclusions.add(material);
+            } else {
+                selectableItemPool.add(material);
+                if (defaultBanned) defaultPlayerBans.add(material);
             }
         }
-        plugin.getLogger().info("动态物品库加载成功！共找到 " + survivalItemPool.size() + " 个生存模式可获取物品。");
+
+        validateRules("mandatory-exclusions", mandatoryRules);
+        validateRules("default-player-bans", defaultBanRules);
+        for (int level = 1; level <= 5; level++) {
+            validateRules("difficulty.levels." + level, difficultyRules.get(level));
+        }
+
+        plugin.getLogger().info("任务物品目录加载成功：候选 " + selectableItemPool.size()
+                + " 个，强制排除 " + mandatoryExclusions.size()
+                + " 个，默认玩家封禁 " + defaultPlayerBans.size() + " 个。");
+    }
+
+    public List<Integer> createDifficultySequence(int totalCount, int startOrdinal,
+                                                   int amount, ItemSelectionPolicy.Mode mode) {
+        return selectionPolicy.createDifficultySequence(totalCount, startOrdinal, amount, mode);
+    }
+
+    public List<Material> generateRequiredItems(List<Integer> difficultySequence,
+                                                Set<Material> excluded,
+                                                ItemSelectionPolicy.Mode mode) {
+        return selectionPolicy.select(selectableItemPool, excluded, difficultySequence,
+                this::getDifficulty, mode);
     }
 
     /**
-     * 从生存物品池中随机生成一份包含指定数量物品的任务列表。
+     * 兼容旧调用：使用默认封禁和渐进难度生成一整份列表。
      */
     public List<Material> generateRequiredItems(int amount) {
-        if (survivalItemPool.isEmpty()) {
-            plugin.getLogger().warning("生存物品池为空，无法生成任务列表！");
-            return new ArrayList<>();
-        }
-        Collections.shuffle(survivalItemPool);
-        int finalAmount = Math.min(amount, survivalItemPool.size());
-        return new ArrayList<>(survivalItemPool.subList(0, finalAmount));
+        List<Integer> sequence = createDifficultySequence(amount, 1, amount,
+                ItemSelectionPolicy.Mode.PROGRESSIVE);
+        return generateRequiredItems(sequence, defaultPlayerBans,
+                ItemSelectionPolicy.Mode.PROGRESSIVE);
     }
-    public int getTotalItemAmount(){
-        return survivalItemPool.size();
+
+    public int getDifficulty(Material material) {
+        ItemDefinition definition = definitions.get(material);
+        return definition == null ? 2 : definition.difficulty();
+    }
+
+    public boolean isSelectable(Material material) {
+        ItemDefinition definition = definitions.get(material);
+        return definition != null && !definition.mandatoryExcluded();
+    }
+
+    public int getAvailableItemCount(Collection<Material> playerBans) {
+        if (playerBans == null || playerBans.isEmpty()) return selectableItemPool.size();
+        Set<Material> bans = new LinkedHashSet<>(playerBans);
+        return (int) selectableItemPool.stream().filter(item -> !bans.contains(item)).count();
+    }
+
+    public int getTotalItemAmount() {
+        return selectableItemPool.size();
+    }
+
+    public List<Material> getSelectableItems() {
+        return Collections.unmodifiableList(selectableItemPool);
+    }
+
+    public Set<Material> getMandatoryExclusions() {
+        return Collections.unmodifiableSet(mandatoryExclusions);
+    }
+
+    public Set<Material> getDefaultPlayerBans() {
+        return Collections.unmodifiableSet(defaultPlayerBans);
+    }
+
+    public Map<Material, ItemDefinition> getDefinitions() {
+        return Collections.unmodifiableMap(definitions);
+    }
+
+    private int resolveDifficulty(Material material, int defaultDifficulty,
+                                  Map<Integer, List<String>> rulesByLevel) {
+        // 较高等级优先，避免 NETHERITE_BLOCK 同时被一般方块规则降级。
+        for (int level = 5; level >= 1; level--) {
+            if (matchesAny(material, rulesByLevel.getOrDefault(level, List.of()))) {
+                return level;
+            }
+        }
+        return defaultDifficulty;
+    }
+
+    private List<String> normalizeRules(List<String> rules) {
+        return rules.stream()
+                .filter(rule -> rule != null && !rule.isBlank())
+                .map(rule -> rule.trim().toUpperCase(Locale.ROOT))
+                .distinct()
+                .toList();
+    }
+
+    static boolean matchesRule(Material material, String rule) {
+        String value = material.name();
+        StringBuilder regex = new StringBuilder("^");
+        for (char character : rule.toUpperCase(Locale.ROOT).toCharArray()) {
+            switch (character) {
+                case '*' -> regex.append(".*");
+                case '?' -> regex.append('.');
+                case '.', '\\', '+', '(', ')', '[', ']', '{', '}', '^', '$', '|' ->
+                        regex.append('\\').append(character);
+                default -> regex.append(character);
+            }
+        }
+        return value.matches(regex.append('$').toString());
+    }
+
+    private boolean matchesAny(Material material, List<String> rules) {
+        return rules.stream().anyMatch(rule -> matchesRule(material, rule));
+    }
+
+    private void validateRules(String path, List<String> rules) {
+        for (String rule : rules) {
+            boolean matched = java.util.Arrays.stream(Material.values())
+                    .anyMatch(material -> matchesRule(material, rule));
+            if (!matched) {
+                plugin.getLogger().warning("items.yml 的 " + path + " 包含无效规则：" + rule);
+            }
+        }
+    }
+
+    private static int clampDifficulty(int difficulty) {
+        return Math.max(1, Math.min(difficulty, 5));
     }
 }

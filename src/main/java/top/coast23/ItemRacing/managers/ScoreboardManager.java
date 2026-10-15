@@ -189,6 +189,12 @@ public class ScoreboardManager {
         lines.add(Component.text("  工具: ", NamedTextColor.YELLOW).append(Component.text(settings.getToolType().toString(), NamedTextColor.GREEN)));
         lines.add(Component.text("  鞘翅: ", NamedTextColor.YELLOW).append(Component.text(settings.getElytraType().toString(), NamedTextColor.GREEN)));
         lines.add(Component.text("  食物: ", NamedTextColor.YELLOW).append(Component.text(settings.getFoodType().toString(), NamedTextColor.GREEN)));
+        lines.add(Component.text("  工具附魔: ", NamedTextColor.YELLOW).append(Component.text(
+                "效率" + settings.getToolEfficiencyLevel()
+                        + "/耐久" + settings.getToolUnbreakingLevel()
+                        + "/" + settings.getToolDropEnchantment().displayName(), NamedTextColor.GREEN)));
+        lines.add(Component.text("  难度/封禁: ", NamedTextColor.YELLOW).append(Component.text(
+                settings.getItemSelectionMode().displayName() + "/" + settings.getBannedItems().size(), NamedTextColor.GREEN)));
         lines.add(Component.text("  速度/急迫/抗性提升: ", NamedTextColor.YELLOW).append(Component.text(settings.getSpeedLevel() + "/" + settings.getHasteLevel() + "/" + settings.getResistLevel(), NamedTextColor.GREEN)));
         lines.add(Component.empty());
         lines.add(Component.text("在线玩家: " + Bukkit.getOnlinePlayers().size(), NamedTextColor.YELLOW));

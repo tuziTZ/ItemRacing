@@ -41,8 +41,9 @@ public final class ItemRacing extends JavaPlugin {
         bossBarManager = new BossBarManager();
 
         configManager.loadConfig();
+        itemManager.loadSurvivalItemPool();
 
-        gameSettings = new GameSettingsManager(configManager);
+        gameSettings = new GameSettingsManager(configManager, itemManager);
 
         scoreboardManager = new ScoreboardManager(this, null, playerSettings);
         gameManager = new GameManager(this, teamManager, configManager, itemManager, lobbyManager, bossBarManager, gameSettings, scoreboardManager);
@@ -52,7 +53,6 @@ public final class ItemRacing extends JavaPlugin {
 
         broadcastManager = new BroadcastManager();
 
-        itemManager.loadSurvivalItemPool();
         configManager.loadTeams(teamManager);
 
 
